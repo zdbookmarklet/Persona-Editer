@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.1
+// @version      2.7.2
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.1"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.2"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -294,16 +294,16 @@
   #panel.resized { max-height: none; }
   /* Subtle diagonal grips: touch targets stay generous, artwork stays tiny. */
   .panel-resize-handle {
-    position: sticky; bottom: -12px; width: 28px; height: 28px;
-    margin-top: -24px; z-index: 5; touch-action: none;
+    position: fixed; width: 28px; height: 28px;
+    z-index: 2147483647; touch-action: none;
     user-select: none; -webkit-user-select: none;
     cursor: nwse-resize; opacity: .52;
     display: flex; align-items: flex-end; justify-content: flex-end;
     padding: 0 5px 5px 0; color: #87909b;
     background: transparent; border: 0;
   }
-  #resize-left { float: left; margin-left: -12px; cursor: nesw-resize; transform: scaleX(-1); }
-  #resize-right { float: right; margin-right: -12px; }
+  #resize-left { cursor: nesw-resize; transform: scaleX(-1); }
+  #resize-right { cursor: nwse-resize; }
   .panel-resize-handle::after {
     content: ""; display: block; width: 13px; height: 13px;
     background: repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4.5px, transparent 4.5px 7px);
@@ -503,9 +503,9 @@
   <div class="row">
     <button id="reset-pos">버튼 위치 초기화</button>
   </div>
-  <div id="resize-left" class="panel-resize-handle" aria-label="왼쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
-  <div id="resize-right" class="panel-resize-handle" aria-label="오른쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
 </div>
+<div id="resize-left" class="panel-resize-handle" aria-label="왼쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
+<div id="resize-right" class="panel-resize-handle" aria-label="오른쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
 `;
 
     const el = (id) => root.getElementById(id);
@@ -580,6 +580,20 @@
         panelEl.classList.add("resized");
     }
     applyPanelSize();
+    // Handles are separate fixed overlays, never children of the scrolling panel.
+    // Their coordinates follow the actual panel border during resizing.
+    function syncResizeHandles() {
+        const visible = panelEl.classList.contains("open");
+        const r = panelEl.getBoundingClientRect();
+        for (const side of ["left", "right"]) {
+            const h = el("resize-" + side);
+            h.style.display = visible ? "flex" : "none";
+            if (!visible) continue;
+            h.style.left = Math.round((side === "left" ? r.left : r.right) - 14) + "px";
+            h.style.top = Math.round(r.bottom - 14) + "px";
+        }
+    }
+    syncResizeHandles();
     for (const side of ["left", "right"]) {
         const handle = el("resize-" + side);
         let session = null;
@@ -620,6 +634,7 @@
             panelEl.style.top = top + "px";
             panelEl.style.width = width + "px";
             panelEl.style.height = height + "px";
+            syncResizeHandles();
         });
         const finish = e => {
             if (!session || e.pointerId !== session.id) return;
@@ -664,9 +679,11 @@
     } else {
         panelEl.style.top = (window.innerHeight - pos.bottom + 10) + "px";
     }
+    if (typeof syncResizeHandles === "function") syncResizeHandles();
 }
 
     applyPos(getPos());
+    syncResizeHandles();
     // Keep resized panels on screen when the viewport changes.
     window.addEventListener("resize", () => {
         applyPanelSize();
@@ -675,6 +692,7 @@
             panelEl.style.left = clamp(r.left, 0, Math.max(0, vp.w - r.width)) + "px";
             panelEl.style.top = clamp(r.top, 0, Math.max(0, vp.h - r.height)) + "px";
         }
+        syncResizeHandles();
     });
 
     // [v2.6.1] 실제 글자수 제한은 제타가 언제든 바꿀 수 있어서, 여기서 숫자를 하드코딩해
@@ -1961,6 +1979,7 @@
 
     async function setPanelOpen(open) {
         panelEl.classList.toggle("open", open);
+        syncResizeHandles();
         if (open) {
             refreshRoomUI();
             if (!lastPlotId && capturedAuth && roomId) {
