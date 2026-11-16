@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.6.9
+// @version      2.7.0
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.6.9"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.0"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -291,6 +291,25 @@
     display: none;
   }
   #panel.open { display: block; }
+  #panel.resized { max-height: none; }
+  .panel-resize-handle {
+    position: sticky; bottom: -12px; width: 34px; height: 34px;
+    margin-top: -22px; z-index: 5; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+    cursor: nwse-resize; opacity: .8;
+    display: flex; align-items: end; justify-content: center;
+    padding-bottom: 3px; color: #aeb5be;
+  }
+  #resize-left { float: left; margin-left: -12px; cursor: nesw-resize; }
+  #resize-right { float: right; margin-right: -12px; }
+  .panel-resize-handle::after {
+    content: ""; display: block; width: 13px; height: 13px;
+    border-right: 3px solid currentColor; border-bottom: 3px solid currentColor;
+    border-radius: 1px;
+  }
+  #resize-left::after { transform: scaleX(-1); }
+  #panel.light .panel-resize-handle { color: #64758b; }
+  #panel.resizing { user-select: none; -webkit-user-select: none; }
 
   /* 텍스트 입력칸(이름/키워드) 기본 스타일 */
   input[type="text"] {
@@ -481,6 +500,8 @@
   <div class="row">
     <button id="reset-pos">버튼 위치 초기화</button>
   </div>
+  <div id="resize-left" class="panel-resize-handle" aria-label="왼쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
+  <div id="resize-right" class="panel-resize-handle" aria-label="오른쪽 아래 모서리에서 크기 조절" title="드래그하여 크기 조절"></div>
 </div>
 `;
 
@@ -537,6 +558,77 @@
     const sectionDeleteBtn = el("section-delete-btn");
     const sectionDissolveBtn = el("section-dissolve-btn");
 
+    // Panel resizing: pointer events cover mouse, touch, and pen.
+    const PANEL_SIZE_KEY = "zeta-persona-editor-panel-size";
+    const PANEL_MIN_WIDTH = 260;
+    const PANEL_MIN_HEIGHT = 260;
+    const viewportSize = () => ({ w: document.documentElement.clientWidth || window.innerWidth, h: document.documentElement.clientHeight || window.innerHeight });
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    let savedPanelSize = null;
+    try {
+        const p = JSON.parse(localStorage.getItem(PANEL_SIZE_KEY) || "null");
+        if (p && Number.isFinite(p.width) && Number.isFinite(p.height)) savedPanelSize = p;
+    } catch {}
+    function applyPanelSize() {
+        if (!savedPanelSize) return;
+        const vp = viewportSize();
+        panelEl.style.width = clamp(savedPanelSize.width, Math.min(PANEL_MIN_WIDTH, vp.w), vp.w) + "px";
+        panelEl.style.height = clamp(savedPanelSize.height, Math.min(PANEL_MIN_HEIGHT, vp.h), vp.h) + "px";
+        panelEl.classList.add("resized");
+    }
+    applyPanelSize();
+    for (const side of ["left", "right"]) {
+        const handle = el("resize-" + side);
+        let session = null;
+        handle.addEventListener("pointerdown", e => {
+            if (!panelEl.classList.contains("open") || (e.button !== undefined && e.button !== 0)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const r = panelEl.getBoundingClientRect();
+            session = { id: e.pointerId, x: e.clientX, y: e.clientY, rect: r };
+            panelEl.style.left = r.left + "px";
+            panelEl.style.top = r.top + "px";
+            panelEl.style.right = "auto";
+            panelEl.style.bottom = "auto";
+            panelEl.style.width = r.width + "px";
+            panelEl.style.height = r.height + "px";
+            panelEl.classList.add("resized", "resizing");
+            handle.setPointerCapture(e.pointerId);
+        });
+        handle.addEventListener("pointermove", e => {
+            if (!session || e.pointerId !== session.id) return;
+            e.preventDefault();
+            const vp = viewportSize();
+            const r = session.rect;
+            const minW = Math.min(PANEL_MIN_WIDTH, vp.w);
+            const minH = Math.min(PANEL_MIN_HEIGHT, vp.h);
+            let left, width;
+            if (side === "left") {
+                const right = Math.min(r.right, vp.w);
+                width = clamp(r.width + session.x - e.clientX, minW, Math.max(minW, right));
+                left = Math.max(0, right - width);
+            } else {
+                left = Math.max(0, r.left);
+                width = clamp(r.width + e.clientX - session.x, minW, Math.max(minW, vp.w - left));
+            }
+            const top = Math.max(0, Math.min(r.top, vp.h - minH));
+            const height = clamp(r.height + e.clientY - session.y, minH, Math.max(minH, vp.h - top));
+            panelEl.style.left = left + "px";
+            panelEl.style.top = top + "px";
+            panelEl.style.width = width + "px";
+            panelEl.style.height = height + "px";
+        });
+        const finish = e => {
+            if (!session || e.pointerId !== session.id) return;
+            session = null;
+            panelEl.classList.remove("resizing");
+            savedPanelSize = { width: Math.round(panelEl.getBoundingClientRect().width), height: Math.round(panelEl.getBoundingClientRect().height) };
+            try { localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(savedPanelSize)); } catch {}
+        };
+        handle.addEventListener("pointerup", finish);
+        handle.addEventListener("pointercancel", finish);
+        handle.addEventListener("lostpointercapture", finish);
+    }
     const BTN_SIZE = 32;
     const BTN_MARGIN = 4;
 
@@ -572,6 +664,15 @@
 }
 
     applyPos(getPos());
+    // Keep resized panels on screen when the viewport changes.
+    window.addEventListener("resize", () => {
+        applyPanelSize();
+        const r = panelEl.getBoundingClientRect(), vp = viewportSize();
+        if (panelEl.classList.contains("resized") && panelEl.style.left && panelEl.style.top) {
+            panelEl.style.left = clamp(r.left, 0, Math.max(0, vp.w - r.width)) + "px";
+            panelEl.style.top = clamp(r.top, 0, Math.max(0, vp.h - r.height)) + "px";
+        }
+    });
 
     // [v2.6.1] 실제 글자수 제한은 제타가 언제든 바꿀 수 있어서, 여기서 숫자를 하드코딩해
     // "/N자"로 보여주는 건 업데이트마다 어긋날 위험이 있다. 그래서 제한 숫자 표시는 없애고
