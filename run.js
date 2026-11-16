@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.2
+// @version      2.7.3
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.2"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.3"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -292,26 +292,29 @@
   }
   #panel.open { display: block; }
   #panel.resized { max-height: none; }
-  /* Subtle diagonal grips: touch targets stay generous, artwork stays tiny. */
+  /* Small, inset three-line corner grips; the 30px touch target is invisible. */
   .panel-resize-handle {
-    position: fixed; width: 28px; height: 28px;
+    position: fixed; width: 30px; height: 30px;
     z-index: 2147483647; touch-action: none;
     user-select: none; -webkit-user-select: none;
-    cursor: nwse-resize; opacity: .52;
+    cursor: nwse-resize; opacity: .65;
     display: flex; align-items: flex-end; justify-content: flex-end;
-    padding: 0 5px 5px 0; color: #87909b;
+    padding: 0 6px 6px 0; color: #8b98a6;
     background: transparent; border: 0;
   }
   #resize-left { cursor: nesw-resize; transform: scaleX(-1); }
   #resize-right { cursor: nwse-resize; }
   .panel-resize-handle::after {
-    content: ""; display: block; width: 13px; height: 13px;
-    background: repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4.5px, transparent 4.5px 7px);
+    content: ""; display: block; width: 12px; height: 12px;
+    background: linear-gradient(135deg,
+      transparent 0 35%, currentColor 35% 42%, transparent 42% 57%,
+      currentColor 57% 64%, transparent 64% 79%,
+      currentColor 79% 86%, transparent 86%);
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
     pointer-events: none;
   }
-  #panel.light .panel-resize-handle { color: #8695a6; }
-  .panel-resize-handle:hover { opacity: .9; }
+  #resize-left, #resize-right { color: #8b98a6; }
+  .panel-resize-handle:hover { opacity: .85; }
   #panel.resizing { user-select: none; -webkit-user-select: none; }
 
   /* 텍스트 입력칸(이름/키워드) 기본 스타일 */
@@ -589,8 +592,8 @@
             const h = el("resize-" + side);
             h.style.display = visible ? "flex" : "none";
             if (!visible) continue;
-            h.style.left = Math.round((side === "left" ? r.left : r.right) - 14) + "px";
-            h.style.top = Math.round(r.bottom - 14) + "px";
+            h.style.left = Math.round(side === "left" ? r.left + 1 : r.right - 31) + "px";
+            h.style.top = Math.round(r.bottom - 31) + "px";
         }
     }
     syncResizeHandles();
