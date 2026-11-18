@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.3
+// @version      2.7.4
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.3"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.4"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -2004,11 +2004,31 @@
         }
     }
 
-    document.addEventListener("click", (e) => {
-        if (!panelEl.classList.contains("open")) return;
-        if (host.contains(e.target) || (e.composedPath && e.composedPath().includes(host))) return;
+    // Close on outside interactions. Shadow DOM retargets internal events to host,
+    // so inspect the composed path; resize grips and the floating button are inside.
+    function isEditorEvent(e) {
+        return e.composedPath ? e.composedPath().includes(host) : host.contains(e.target);
+    }
+    function closeOnOutside(e) {
+        if (!panelEl.classList.contains("open") || isEditorEvent(e)) return;
         setPanelOpen(false);
-    }, true);
+    }
+    document.addEventListener("pointerdown", closeOnOutside, true);
+    // Fallback for browsers that dispatch click without pointerdown.
+    document.addEventListener("click", closeOnOutside, true);
+
+    // Clicks inside an iframe never bubble to the parent document.
+    // When focus enters an iframe, the parent window blurs; detect that
+    // specifically rather than closing for every unrelated window blur.
+    window.addEventListener("blur", () => {
+        setTimeout(() => {
+            if (!panelEl.classList.contains("open")) return;
+            const active = document.activeElement;
+            if (active && active.tagName === "IFRAME" && !host.contains(active)) {
+                setPanelOpen(false);
+            }
+        }, 0);
+    });
 
     document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && panelEl.classList.contains("open")) setPanelOpen(false);
