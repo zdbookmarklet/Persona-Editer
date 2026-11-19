@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.4
+// @version      2.7.5
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.4"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.5"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -259,6 +259,7 @@
 
   #btn {
     position: fixed;
+    z-index: 100;
     width: 32px; height: 32px; border-radius: 50%;
     background: #6b6f76; color: #fff;
     display: flex; align-items: center; justify-content: center;
@@ -283,6 +284,7 @@
 
   #panel {
     position: fixed;
+    z-index: 10;
     width: 290px; max-height: 74vh; overflow-y: auto;
     background: #232427; color: #eee;
     border: 1px solid #6b6f76; border-radius: 12px;
@@ -291,6 +293,10 @@
     display: none;
   }
   #panel.open { display: block; }
+  #panel-close {
+    flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+    font-size: 19px; line-height: 1; border-radius: 7px;
+  }
   #panel.resized { max-height: none; }
   /* Small, inset three-line corner grips; the 30px touch target is invisible. */
   .panel-resize-handle {
@@ -438,7 +444,10 @@
 <div id="panel">
   <div class="title">
     <span>Persona Editor</span>
-    <button id="theme-toggle" type="button" title="라이트/다크 테마 전환">☀ 라이트</button>
+    <div style="display:flex;align-items:center;gap:5px;">
+      <button id="theme-toggle" type="button" title="라이트/다크 테마 전환">☀ 라이트</button>
+      <button id="panel-close" type="button" aria-label="편집기 닫기" title="닫기">×</button>
+    </div>
   </div>
   <div class="room" id="room"></div>
 
@@ -687,6 +696,22 @@
 
     applyPos(getPos());
     syncResizeHandles();
+    // Keep the panel fully visible even when a saved size is larger than the
+    // space available beside the floating button.
+    function keepPanelInViewport() {
+        if (!panelEl.classList.contains("open") || panelEl.classList.contains("resizing")) return;
+        const vp = viewportSize();
+        const r = panelEl.getBoundingClientRect();
+        const x = clamp(r.left, 2, Math.max(2, vp.w - r.width - 2));
+        const y = clamp(r.top, 2, Math.max(2, vp.h - r.height - 2));
+        if (Math.abs(x - r.left) > 1 || Math.abs(y - r.top) > 1) {
+            panelEl.style.left = x + "px";
+            panelEl.style.top = y + "px";
+            panelEl.style.right = "auto";
+            panelEl.style.bottom = "auto";
+        }
+        syncResizeHandles();
+    }
     // Keep resized panels on screen when the viewport changes.
     window.addEventListener("resize", () => {
         applyPanelSize();
@@ -695,7 +720,7 @@
             panelEl.style.left = clamp(r.left, 0, Math.max(0, vp.w - r.width)) + "px";
             panelEl.style.top = clamp(r.top, 0, Math.max(0, vp.h - r.height)) + "px";
         }
-        syncResizeHandles();
+        keepPanelInViewport();
     });
 
     // [v2.6.1] 실제 글자수 제한은 제타가 언제든 바꿀 수 있어서, 여기서 숫자를 하드코딩해
@@ -1982,7 +2007,14 @@
 
     async function setPanelOpen(open) {
         panelEl.classList.toggle("open", open);
-        syncResizeHandles();
+        if (open) {
+            // Re-anchor to the floating button on each opening. Previously
+            // resized panels could retain an off-screen absolute position.
+            applyPos(getPos());
+            keepPanelInViewport();
+        } else {
+            syncResizeHandles();
+        }
         if (open) {
             refreshRoomUI();
             if (!lastPlotId && capturedAuth && roomId) {
@@ -2004,6 +2036,11 @@
         }
     }
 
+    el("panel-close").addEventListener("click", e => {
+        e.stopPropagation();
+        setPanelOpen(false);
+    });
+
     // Close on outside interactions. Shadow DOM retargets internal events to host,
     // so inspect the composed path; resize grips and the floating button are inside.
     function isEditorEvent(e) {
@@ -2014,6 +2051,16 @@
         setPanelOpen(false);
     }
     document.addEventListener("pointerdown", closeOnOutside, true);
+    // Same-origin ancestor frames can forward outside taps. Cross-origin
+    // frames are inaccessible; the dedicated close button remains available.
+    try {
+        let w = window;
+        while (w.parent && w.parent !== w) {
+            w = w.parent;
+            w.document.addEventListener("pointerdown", closeOnOutside, true);
+            w.document.addEventListener("click", closeOnOutside, true);
+        }
+    } catch { /* cross-origin ancestor: cannot inspect its document */ }
     // Fallback for browsers that dispatch click without pointerdown.
     document.addEventListener("click", closeOnOutside, true);
 
