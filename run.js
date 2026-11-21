@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.7
+// @version      2.7.8
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.7"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.8"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -2150,12 +2150,34 @@
         }
     }
 
+    // The recommendation endpoint can temporarily return an incomplete or stale
+    // response. Never PATCH until a fresh response verifies the exact target.
+    async function verifyRecBeforeSave(recId, forRoom) {
+        let reason = "조회 실패";
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (forRoom !== roomId || !capturedAuth) return { ok: false, reason: "방 변경 또는 인증 없음" };
+            const me = await fetchRecMeFresh();
+            if (forRoom !== roomId) return { ok: false, reason: "방 변경" };
+            if (!me) {
+                reason = "서버 조회 실패";
+            } else if (String(me.plotChatProfileId) !== String(recId)) {
+                reason = "추천프로필 ID 불일치";
+            } else if (me.selected !== true) {
+                reason = "현재 방에 연결되지 않은 추천프로필";
+            } else if (typeof me.description !== "string") {
+                reason = "수정본 내용 없음";
+            } else {
+                recMeData = me;
+                recMeFetchedForRoom = forRoom;
+                return { ok: true };
+            }
+            if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 450 * (attempt + 1)));
+        }
+        return { ok: false, reason };
+    }
+
     async function doAutoSaveRec() {
         if (!isRecKey(activePersonaId)) return;
-        if (!isRecVerified(recIdFromKey(activePersonaId))) {
-            setSaveState("error", "수정본 미확인 · 저장 차단");
-            return;
-        }
         if (!capturedAuth) {
             setSaveState("error", "인증 없음 ❌");
             return;
@@ -2164,14 +2186,22 @@
             saveQueued = true;
             return;
         }
+        const forRoom = roomId;
+        const targetKey = activePersonaId;
+        const recId = recIdFromKey(targetKey);
         saveInFlight = true;
-        setSaveState("saving", "저장 중...");
+        setSaveState("saving", "추천프로필 확인 중...");
         clearErrorDetail();
 
-        const recId = recIdFromKey(activePersonaId);
-        if (String(recMeData && recMeData.plotChatProfileId) !== String(recId) || !recMeData || recMeData.selected !== true) {
-            setSaveState("error", "현재 방의 연결 추천프로필과 불일치 · 저장 차단");
-            saveInFlight = false;
+        try {
+        const verified = await verifyRecBeforeSave(recId, forRoom);
+        if (!verified.ok) {
+            setSaveState("error", verified.reason + " · 저장 차단");
+            showErrorDetail("서버 확인에 실패했습니다. 수정 내용은 유지됩니다. 잠시 후 다시 저장해 주세요.");
+            return;
+        }
+        if (roomId !== forRoom || activePersonaId !== targetKey || mode !== "persona") {
+            setSaveState("error", "편집 대상 변경 · 저장 중단");
             return;
         }
         syncActiveSectionFromEditor();
@@ -2216,6 +2246,17 @@
             if (saveQueued) {
                 saveQueued = false;
                 doAutoSave();
+            }
+        }
+        } finally {
+            // Also release the lock on validation failures, which return
+            // before the PATCH request's own try/finally.
+            if (saveInFlight) {
+                saveInFlight = false;
+                if (saveQueued) {
+                    saveQueued = false;
+                    doAutoSave();
+                }
             }
         }
     }
