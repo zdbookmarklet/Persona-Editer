@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zeta Persona Quick Editor
 // @namespace    zeta-persona-editor
-// @version      2.7.8
+// @version      2.7.9
 // @description  현재 방의 유저 페르소나(+추천 프로필) / {{char}} 상세 / 로어북을 자동으로 불러와서, 페이지 이동 없이 바로 수정/자동저장하는 미니 에디터
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -19,7 +19,7 @@
     }
     window.__ZETA_PERSONA_EDITOR_RUNNING__ = true;
 
-    const VERSION = "2.7.8"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
+    const VERSION = "2.7.9"; // [v2.6.8] 제목(name)은 2400자 합계와 무관한 별개 20자 제한 필드로 처리(합계 제외, 20자 표시, 탭 나누기 제외)
     // [v2.6.7] {{char}}(플롯) 모드에 "제목(name)" 편집 항목 추가 — 드롭다운에서 선택해 수정/저장 가능
     // [v2.6.6] {{user}} 프로필(직접 만든 것만, 추천프로필 제외) 삭제 버튼 추가
     // [v2.6.5] {{user}} 첫 오픈 시 로컬 캐시(마지막 선택)보다 실제 연결(🔗)된 프로필을 우선 로드하도록 수정
@@ -253,11 +253,29 @@
     all: initial;
     position: fixed !important;
     top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    pointer-events: none;
     z-index: 2147483647 !important;
   }
   * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 
+  #outside-backdrop {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+    display: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    pointer-events: auto;
+    touch-action: manipulation;
+  }
+  #outside-backdrop.open { display: block; }
   #btn {
+    pointer-events: auto;
     position: fixed;
     z-index: 100;
     width: 32px; height: 32px; border-radius: 50%;
@@ -283,6 +301,7 @@
   #btn.no-auth .dot { display: block; background: #c98a4b; }
 
   #panel {
+    pointer-events: auto;
     position: fixed;
     z-index: 10;
     width: 290px; max-height: 74vh; overflow-y: auto;
@@ -300,6 +319,7 @@
   #panel.resized { max-height: none; }
   /* Small, inset three-line corner grips; the 30px touch target is invisible. */
   .panel-resize-handle {
+    pointer-events: auto;
     position: fixed; width: 30px; height: 30px;
     z-index: 2147483647; touch-action: none;
     user-select: none; -webkit-user-select: none;
@@ -441,6 +461,7 @@
 </style>
 
 <div id="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span class="dot"></span></div>
+<button id="outside-backdrop" type="button" aria-label="편집기 닫기"></button>
 <div id="panel">
   <div class="title">
     <span>Persona Editor</span>
@@ -541,6 +562,7 @@
 
     const btnEl = el("btn");
     const panelEl = el("panel");
+    const outsideBackdropEl = el("outside-backdrop");
     const roomEl = el("room");
     const statusEl = el("status");
     const selectEl = el("target-select");
@@ -2007,6 +2029,7 @@
 
     async function setPanelOpen(open) {
         panelEl.classList.toggle("open", open);
+        outsideBackdropEl.classList.toggle("open", open);
         if (open) {
             // Re-anchor to the floating button on each opening. Previously
             // resized panels could retain an off-screen absolute position.
@@ -2036,6 +2059,16 @@
         }
     }
 
+    // Like the Tool Pocket scrim: hit-test outside the panel directly,
+    // including over iframes, rather than waiting for document bubbling.
+    outsideBackdropEl.addEventListener("pointerdown", e => {
+        e.stopPropagation();
+        setPanelOpen(false);
+    });
+    outsideBackdropEl.addEventListener("click", e => {
+        e.stopPropagation();
+        setPanelOpen(false);
+    });
     el("panel-close").addEventListener("click", e => {
         e.stopPropagation();
         setPanelOpen(false);
